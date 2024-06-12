@@ -16,7 +16,8 @@ export const roles = pgTable("roles", {
 export const users = pgTable("users", {
   id: serial("id").primaryKey(),
   clerkId: varchar("clerk_id", { length: 256 }),
-  username: text("username").unique(),
+  firstName: text("first_name"),
+  lastName: text("last_name"),
   email: varchar("email", { length: 256 }),
   role: integer("role_id").references(() => roles.id),
   onboarded: boolean("onboarded").default(false),
@@ -26,5 +27,15 @@ export const users = pgTable("users", {
 export const organizations = pgTable("organizations", {
   id: serial("id").primaryKey(),
   name: text("name").unique(),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
+export const invitations = pgTable("invitations", {
+  id: serial("id").primaryKey(),
+  token: varchar("token", { length: 256 }).unique(),
+  email: varchar("email", { length: 256 }),
+  role: integer("role_id").references(() => roles.id),
+  organization: integer("organization_id").references(() => organizations.id),
+  accepted: boolean("accepted").default(false),
   createdAt: timestamp("created_at").defaultNow(),
 });

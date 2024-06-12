@@ -1,6 +1,5 @@
-import { eq } from "drizzle-orm";
 import { db } from "../db/db";
-import { roles, users } from "../db/schema";
+import { users } from "../db/schema";
 import { Request, Response } from "express";
 
 export const UserCreationWebhook = async (req: Request, res: Response) => {
@@ -12,7 +11,8 @@ export const UserCreationWebhook = async (req: Request, res: Response) => {
 
   const userId = data.id;
   const userEmail = data.email_addresses[0].email_address;
-  const username = data.username;
+  const firstName = data.first_name;
+  const lastName = data.last_name;
   
   try {
     await db
@@ -20,7 +20,8 @@ export const UserCreationWebhook = async (req: Request, res: Response) => {
       .values({
         clerkId: userId,
         email: userEmail,
-        username: username,
+        firstName: firstName,
+        lastName: lastName,
         role: null,
         organization: null,
       })

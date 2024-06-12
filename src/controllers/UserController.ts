@@ -1,7 +1,19 @@
 import { Request, Response } from "express";
 import { db } from "../db/db";
-import { organizations, roles, users } from "../db/schema";
-import { eq } from "drizzle-orm";
+import { invitations, organizations, roles, users } from "../db/schema";
+import { eq, isNotNull } from "drizzle-orm";
+import Crypto from "crypto";
+import { sql } from "drizzle-orm";
+import AWS from "aws-sdk";
+import { and } from "drizzle-orm";
+
+AWS.config.update({
+  accessKeyId: process.env.AWS_ACCESS_KEY_ID,
+  secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
+  region: process.env.AWS_REGION,
+});
+
+const ses = new AWS.SES({ apiVersion: "2010-12-01" });
 
 export const getUserInfo = async (req: Request, res: Response) => {
   try {
@@ -11,23 +23,21 @@ export const getUserInfo = async (req: Request, res: Response) => {
       return res.status(400).json({ message: "Missing required fields" });
     }
 
-    console.log(clerkId)
-
     const user = await db
       .select({
         userId: users.id,
         clerkId: users.clerkId,
         role: roles.name,
-        username: users.username,
+        firstName: users.firstName,
+        lastName: users.lastName,
         organization: organizations.name,
+        organizationId: users.organization,
         onboarded: users.onboarded,
       })
       .from(users)
       .leftJoin(roles, eq(users.role, roles.id))
       .leftJoin(organizations, eq(users.organization, organizations.id))
       .where(eq(users.clerkId, clerkId));
-
-      console.log(user[0])
 
     res.status(200).json(user[0]);
   } catch (error) {
@@ -57,7 +67,7 @@ export const userOnboarding = async (req: Request, res: Response) => {
     const existingOrganizations = await db
       .select()
       .from(organizations)
-      .where(eq(organizations.name, organization))
+      .where(sql`LOWER(${organizations.name}) = LOWER(${organization})`)
       .execute();
 
     if (existingOrganizations.length > 0) {
@@ -87,6 +97,154 @@ export const userOnboarding = async (req: Request, res: Response) => {
     }
   } catch (error) {
     console.error(error);
+    res.status(500).json({ message: "Internal server error" });
+  }
+};
+
+export const inviteUser = async (req: Request, res: Response) => {
+  try {
+    const { email, role, organizationId } = req.body;
+
+    if (!email || !role) {
+      return res.status(400).json({ message: "Email and role are required" });
+    }
+
+    const existingUser = await db
+      .select()
+      .from(users)
+      .where(and(eq(users.email, email), isNotNull(users.organization)))
+      .execute();
+
+    if (existingUser.length > 0) {
+      return res
+        .status(400)
+        .json({
+          message: "User with this email already belongs to an organization",
+        });
+    }
+
+    const token = Crypto.randomBytes(16).toString("hex");
+
+    try {
+      await db.insert(invitations).values({
+        email: email,
+        role: role,
+        token: token,
+        createdAt: new Date(),
+        organization: organizationId,
+      });
+    } catch (dbError) {
+      console.error("Database error:", dbError);
+      return res
+        .status(500)
+        .json({ message: "Error adding invitation to the database" });
+    }
+
+    const link = `${process.env.CLIENT_URL}/register?token=${token}`;
+
+    const params = {
+      Destination: {
+        ToAddresses: [email],
+      },
+      Message: {
+        Body: {
+          Text: { Data: `Please click the link to join: ${link}` },
+        },
+        Subject: { Data: "Invitation to Join" },
+      },
+      Source: "rezwans1027@gmail.com",
+    };
+
+    // Send the email
+    try {
+      await ses.sendEmail(params).promise();
+    } catch (emailError) {
+      console.error("Email sending error:", emailError);
+      return res.status(500).json({ message: "Error sending email" });
+    }
+
+    res.status(200).json({ message: "Invitation sent successfully" });
+  } catch (error) {
+    console.error("Unexpected error:", error);
+    res.status(500).json({ message: "Internal server error" });
+  }
+};
+
+export const getInvitation = async (req: Request, res: Response) => {
+  try {
+    const token = req.params.token as string;
+
+    if (!token) {
+      return res.status(400).json({ message: "Token is required" });
+    }
+
+    const invitation = await db
+      .select({
+        invitationId: invitations.id,
+        token: invitations.token,
+        organizationId: organizations.id,
+        organizationName: organizations.name,
+        roleId: roles.id,
+        roleName: roles.name,
+      })
+      .from(invitations)
+      .leftJoin(organizations, eq(invitations.organization, organizations.id))
+      .leftJoin(roles, eq(invitations.role, roles.id))
+      .where(eq(invitations.token, token))
+      .execute();
+
+    if (invitation.length === 0) {
+      return res.status(404).json({ message: "Invitation not found" });
+    }
+
+    res.status(200).json(invitation[0]);
+  } catch (error) {
+    console.error("Unexpected error:", error);
+    res.status(500).json({ message: "Internal server error" });
+  }
+};
+
+export const acceptInvitation = async (req: Request, res: Response) => {
+  try {
+    const token = req.params.token as string;
+
+    if (!token) {
+      return res.status(400).json({ message: "Token is required" });
+    }
+
+    const invitation = await db
+      .select({
+        invitationId: invitations.id,
+        email: invitations.email,
+        roleId: invitations.role,
+        organizationId: invitations.organization,
+      })
+      .from(invitations)
+      .where(eq(invitations.token, token))
+      .execute();
+
+    if (invitation.length === 0) {
+      return res.status(404).json({ message: "Invitation not found" });
+    }
+
+    const { email, roleId, organizationId } = invitation[0];
+    console.log(email, roleId, organizationId);
+
+    await db
+      .update(users)
+      .set({
+        organization: organizationId,
+        role: roleId,
+        onboarded: true,
+      })
+      .where(eq(users.email, email!))
+      .execute();
+
+    await db.delete(invitations).where(eq(invitations.token, token));
+
+    res.status(200).json({ message: "Invitation accepted" });
+  } catch (error) {
+    console.error("Unexpected error:", error);
     res.status(500).json({ message: "Internal server error" });
   }
 };
