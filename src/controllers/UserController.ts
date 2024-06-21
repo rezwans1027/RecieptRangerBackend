@@ -103,7 +103,10 @@ export const userOnboarding = async (req: Request, res: Response) => {
 
 export const inviteUser = async (req: Request, res: Response) => {
   try {
-    const { email, role, organizationId } = req.body;
+    const { email } = req.body;
+    const role = req.roleId
+    const organizationId = req.organizationId;
+    const senderEmail = req.email;
 
     if (!email || !role) {
       return res.status(400).json({ message: "Email and role are required" });
@@ -116,11 +119,9 @@ export const inviteUser = async (req: Request, res: Response) => {
       .execute();
 
     if (existingUser.length > 0) {
-      return res
-        .status(400)
-        .json({
-          message: "User with this email already belongs to an organization",
-        });
+      return res.status(400).json({
+        message: "User with this email already belongs to an organization",
+      });
     }
 
     const token = Crypto.randomBytes(16).toString("hex");
@@ -128,6 +129,7 @@ export const inviteUser = async (req: Request, res: Response) => {
     try {
       await db.insert(invitations).values({
         email: email,
+        senderEmail: senderEmail,
         role: role,
         token: token,
         createdAt: new Date(),
@@ -228,7 +230,6 @@ export const acceptInvitation = async (req: Request, res: Response) => {
     }
 
     const { email, roleId, organizationId } = invitation[0];
-    console.log(email, roleId, organizationId);
 
     await db
       .update(users)
@@ -248,3 +249,112 @@ export const acceptInvitation = async (req: Request, res: Response) => {
     res.status(500).json({ message: "Internal server error" });
   }
 };
+
+export const getInvitations = async (req: Request, res: Response) => {
+  try {
+    const organizationId = req.organizationId as unknown as number;
+    const role = req.userRole as string;
+    const senderEmail = req.params.senderEmail as string;
+    
+
+    if (!organizationId) {
+      return res.status(400).json({ message: "Organization ID is required" });
+    }
+
+    const recentInvitations = db.$with('recentInvitations').as(
+      db.select({
+        email: invitations.email,
+        maxCreatedAt: sql`MAX(${invitations.createdAt})`.as('maxCreatedAt')
+      })
+      .from(invitations)
+      .groupBy(invitations.email)
+    );
+    
+    // Common selection fields
+    const invitationFields = {
+      invitationId: invitations.id,
+      email: invitations.email,
+      senderEmail: invitations.senderEmail,
+      role: roles.name,
+      organization: organizations.name,
+      createdAt: invitations.createdAt,
+    };
+    
+    let invitationList;
+    
+    if (role === "admin") {
+      invitationList = await db
+        .with(recentInvitations)
+        .select(invitationFields)
+        .from(invitations)
+        .leftJoin(roles, eq(invitations.role, roles.id))
+        .leftJoin(organizations, eq(invitations.organization, organizations.id))
+        .innerJoin(recentInvitations, 
+          and(
+            eq(invitations.email, recentInvitations.email),
+            eq(invitations.createdAt, recentInvitations.maxCreatedAt)
+          )
+        )
+        .where(eq(invitations.organization, organizationId))
+        .orderBy(sql`${invitations.createdAt} DESC`)
+        .execute();
+    } else {
+      invitationList = await db
+        .with(recentInvitations)
+        .select(invitationFields)
+        .from(invitations)
+        .leftJoin(roles, eq(invitations.role, roles.id))
+        .leftJoin(organizations, eq(invitations.organization, organizations.id))
+        .innerJoin(recentInvitations, 
+          and(
+            eq(invitations.email, recentInvitations.email),
+            eq(invitations.createdAt, recentInvitations.maxCreatedAt)
+          )
+        )
+        .where(and(
+          eq(invitations.organization, organizationId),
+          eq(invitations.senderEmail, senderEmail)
+        ))
+        .orderBy(sql`${invitations.createdAt} DESC`)
+        .execute();
+    }
+
+    res.status(200).json(invitationList);
+  } catch (error) {
+    console.error("Unexpected error:", error);
+    res.status(500).json({ message: "Internal server error" });
+  }
+};
+ // let invitationList;
+    
+    // if (role === "admin") {
+    //   invitationList = await db
+    //     .select({
+    //       invitationId: invitations.id,
+    //       email: invitations.email,
+    //       senderEmail: invitations.senderEmail,
+    //       role: roles.name,
+    //       organization: organizations.name,
+    //       createdAt: invitations.createdAt,
+    //     })
+    //     .from(invitations)
+    //     .leftJoin(roles, eq(invitations.role, roles.id))
+    //     .leftJoin(organizations, eq(invitations.organization, organizations.id))
+    //     .where(eq(invitations.organization, organizationId))
+    //     .execute();
+    // } else {
+    //   invitationList = await db
+    //     .select({
+    //       invitationId: invitations.id,
+    //       email: invitations.email,
+    //       senderEmail: invitations.senderEmail,
+    //       role: roles.name,
+    //       organization: organizations.name,
+    //       createdAt: invitations.createdAt,
+    //     })
+    //     .from(invitations)
+    //     .leftJoin(roles, eq(invitations.role, roles.id))
+    //     .leftJoin(organizations, eq(invitations.organization, organizations.id))
+    //     .where(and(eq(invitations.organization, organizationId), eq(invitations.senderEmail, senderEmail)))
+    //     .execute();
+    // }

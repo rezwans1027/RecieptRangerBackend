@@ -1,0 +1,1 @@
+ALTER TABLE "invitations" ADD COLUMN "sender_email" varchar(256);

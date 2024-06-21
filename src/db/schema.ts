@@ -13,7 +13,7 @@ export const roles = pgTable("roles", {
   name: text("name").unique(),
 });
 
-export const users = pgTable("users", {
+export const users: any = pgTable("users", {
   id: serial("id").primaryKey(),
   clerkId: varchar("clerk_id", { length: 256 }),
   firstName: text("first_name"),
@@ -22,6 +22,7 @@ export const users = pgTable("users", {
   role: integer("role_id").references(() => roles.id),
   onboarded: boolean("onboarded").default(false),
   organization: integer("organization_id").references(() => organizations.id),
+  manager: integer("manager_id").references(() => users.id)
 });
 
 export const organizations = pgTable("organizations", {
@@ -33,6 +34,7 @@ export const organizations = pgTable("organizations", {
 export const invitations = pgTable("invitations", {
   id: serial("id").primaryKey(),
   token: varchar("token", { length: 256 }).unique(),
+  senderEmail: varchar("sender_email", { length: 256 }),
   email: varchar("email", { length: 256 }),
   role: integer("role_id").references(() => roles.id),
   organization: integer("organization_id").references(() => organizations.id),

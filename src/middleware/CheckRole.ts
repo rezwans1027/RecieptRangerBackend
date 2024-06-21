@@ -3,8 +3,9 @@ import { NextFunction, Request, Response } from "express";
 const checkRole = (allowedRoles: string[]) => {
   return (req: Request, res: Response, next: NextFunction) => {
     const userRole = req.userRole;
+
     if (!userRole) {
-      return res.status(401).json({ error: "User not signed in" });
+      return res.status(401).json({ error: "No role" });
     }
     if (!allowedRoles.includes(userRole)) {
       return res
