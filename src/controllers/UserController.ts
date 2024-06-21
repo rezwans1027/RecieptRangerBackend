@@ -104,7 +104,7 @@ export const userOnboarding = async (req: Request, res: Response) => {
 export const inviteUser = async (req: Request, res: Response) => {
   try {
     const { email } = req.body;
-    const role = req.roleId
+    const role = req.roleId;
     const organizationId = req.organizationId;
     const senderEmail = req.email;
 
@@ -254,22 +254,22 @@ export const getInvitations = async (req: Request, res: Response) => {
   try {
     const organizationId = req.organizationId as unknown as number;
     const role = req.userRole as string;
-    const senderEmail = req.params.senderEmail as string;
-    
+    const senderEmail = req.email as string;
 
     if (!organizationId) {
       return res.status(400).json({ message: "Organization ID is required" });
     }
 
-    const recentInvitations = db.$with('recentInvitations').as(
-      db.select({
-        email: invitations.email,
-        maxCreatedAt: sql`MAX(${invitations.createdAt})`.as('maxCreatedAt')
-      })
-      .from(invitations)
-      .groupBy(invitations.email)
+    const recentInvitations = db.$with("recentInvitations").as(
+      db
+        .select({
+          email: invitations.email,
+          maxCreatedAt: sql`MAX(${invitations.createdAt})`.as("maxCreatedAt"),
+        })
+        .from(invitations)
+        .groupBy(invitations.email)
     );
-    
+
     // Common selection fields
     const invitationFields = {
       invitationId: invitations.id,
@@ -279,9 +279,9 @@ export const getInvitations = async (req: Request, res: Response) => {
       organization: organizations.name,
       createdAt: invitations.createdAt,
     };
-    
+
     let invitationList;
-    
+
     if (role === "admin") {
       invitationList = await db
         .with(recentInvitations)
@@ -289,7 +289,8 @@ export const getInvitations = async (req: Request, res: Response) => {
         .from(invitations)
         .leftJoin(roles, eq(invitations.role, roles.id))
         .leftJoin(organizations, eq(invitations.organization, organizations.id))
-        .innerJoin(recentInvitations, 
+        .innerJoin(
+          recentInvitations,
           and(
             eq(invitations.email, recentInvitations.email),
             eq(invitations.createdAt, recentInvitations.maxCreatedAt)
@@ -305,16 +306,19 @@ export const getInvitations = async (req: Request, res: Response) => {
         .from(invitations)
         .leftJoin(roles, eq(invitations.role, roles.id))
         .leftJoin(organizations, eq(invitations.organization, organizations.id))
-        .innerJoin(recentInvitations, 
+        .innerJoin(
+          recentInvitations,
           and(
             eq(invitations.email, recentInvitations.email),
             eq(invitations.createdAt, recentInvitations.maxCreatedAt)
           )
         )
-        .where(and(
-          eq(invitations.organization, organizationId),
-          eq(invitations.senderEmail, senderEmail)
-        ))
+        .where(
+          and(
+            eq(invitations.organization, organizationId),
+            eq(invitations.senderEmail, senderEmail)
+          )
+        )
         .orderBy(sql`${invitations.createdAt} DESC`)
         .execute();
     }
@@ -325,36 +329,112 @@ export const getInvitations = async (req: Request, res: Response) => {
     res.status(500).json({ message: "Internal server error" });
   }
 };
- // let invitationList;
-    
-    // if (role === "admin") {
-    //   invitationList = await db
-    //     .select({
-    //       invitationId: invitations.id,
-    //       email: invitations.email,
-    //       senderEmail: invitations.senderEmail,
-    //       role: roles.name,
-    //       organization: organizations.name,
-    //       createdAt: invitations.createdAt,
-    //     })
-    //     .from(invitations)
-    //     .leftJoin(roles, eq(invitations.role, roles.id))
-    //     .leftJoin(organizations, eq(invitations.organization, organizations.id))
-    //     .where(eq(invitations.organization, organizationId))
-    //     .execute();
-    // } else {
-    //   invitationList = await db
-    //     .select({
-    //       invitationId: invitations.id,
-    //       email: invitations.email,
-    //       senderEmail: invitations.senderEmail,
-    //       role: roles.name,
-    //       organization: organizations.name,
-    //       createdAt: invitations.createdAt,
-    //     })
-    //     .from(invitations)
-    //     .leftJoin(roles, eq(invitations.role, roles.id))
-    //     .leftJoin(organizations, eq(invitations.organization, organizations.id))
-    //     .where(and(eq(invitations.organization, organizationId), eq(invitations.senderEmail, senderEmail)))
-    //     .execute();
-    // }
+
+export const getManagers = async (req: Request, res: Response) => {
+  try {
+    const organizationId = req.organizationId as number;
+
+    if (!organizationId) {
+      return res.status(400).json({ message: "Organization ID is required" });
+    }
+
+    const employeeCounts = db.$with("employeeCounts").as(
+      db
+        .select({
+          manager_id: users.manager,
+          employee_count: sql<number>`COUNT(${users.id})`.as("employee_count"),
+        })
+        .from(users)
+        .where(eq(users.organization, organizationId))
+        .groupBy(users.manager)
+    );
+
+    // Use the employeeCounts CTE in the main query
+    const managersWithEmployeeCount = await db
+      .with(employeeCounts)
+      .select({
+        id: users.id,
+        email: users.email,
+        firstName: users.firstName,
+        lastName: users.lastName,
+        employee_count:
+          sql<number>`COALESCE(${employeeCounts}.employee_count, 0)`.as(
+            "employee_count"
+          ),
+      })
+      .from(users)
+      .leftJoin(employeeCounts, eq(users.id, employeeCounts.manager_id))
+      .where(and(eq(users.organization, organizationId), eq(users.role, 2)))
+      .execute();
+
+    res.status(200).json(managersWithEmployeeCount);
+  } catch (error) {
+    console.error("Unexpected error:", error);
+    res.status(500).json({ message: "Internal server error" });
+  }
+};
+
+export const getEmployees = async (req: Request, res: Response) => {
+  try {
+    // const organizationId = req.organizationId as number;
+    // const managerId = req.userId as number;
+    // const userRole = req.userRole as string;
+
+    const organizationId = 11;
+    const managerId = 1;
+    const userRole = "admin";
+
+    if (!organizationId) {
+      return res.status(400).json({ message: "Organization ID is required" });
+    }
+
+    let employees;
+
+    if (userRole === "admin") {
+      employees = await db
+        .select({
+          id: users.id,
+          email: users.email,
+          firstName: users.firstName,
+          lastName: users.lastName,
+          manager:
+            sql<string>`CONCAT(manager.first_name, ' ', manager.last_name)`.as(
+              "manager"
+            ),
+        })
+        .from(users)
+        .leftJoin(sql`${users} AS manager`, eq(users.manager, sql`manager.id`))
+        .where(and(eq(users.organization, organizationId), eq(users.role, 3)))
+        .execute();
+    } else if (userRole === "manager") {
+      employees = await db
+        .select({
+          id: users.id,
+          email: users.email,
+          firstName: users.firstName,
+          lastName: users.lastName,
+          manager:
+            sql<string>`CONCAT(manager.first_name, ' ', manager.last_name)`.as(
+              "manager"
+            ),
+        })
+        .from(users)
+        .leftJoin(sql`${users} AS manager`, eq(users.manager, sql`manager.id`))
+        .where(
+          and(
+            eq(users.organization, organizationId),
+            eq(users.manager, managerId),
+            eq(users.role, 3)
+          )
+        )
+        .execute();
+    } else {
+      return res.status(403).json({ message: "Unauthorized" });
+    }
+
+    res.status(200).json(employees);
+  } catch (error) {
+    console.error("Unexpected error:", error);
+    res.status(500).json({ message: "Internal server error" });
+  }
+};
